@@ -310,6 +310,11 @@ public class DiagnosticsTestGenerated extends AbstractDiagnosticsTestWithFirVali
             runTest("compiler/testData/diagnostics/tests/InfixModifierApplicability.kt");
         }
 
+        @TestMetadata("inlineTailrec.kt")
+        public void testInlineTailrec() throws Exception {
+            runTest("compiler/testData/diagnostics/tests/inlineTailrec.kt");
+        }
+
         @TestMetadata("InvokeAndRecursiveResolve.kt")
         public void testInvokeAndRecursiveResolve() throws Exception {
             runTest("compiler/testData/diagnostics/tests/InvokeAndRecursiveResolve.kt");

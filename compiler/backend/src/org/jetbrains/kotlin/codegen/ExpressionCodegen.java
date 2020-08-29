@@ -2590,8 +2590,15 @@ public class ExpressionCodegen extends KtVisitor<StackValue, StackValue> impleme
         CallGenerator callGenerator = getOrCreateCallGenerator(resolvedCall);
         CallableDescriptor descriptor = resolvedCall.getResultingDescriptor();
 
-        assert callGenerator == defaultCallGenerator || !tailRecursionCodegen.isTailRecursion(resolvedCall) :
-                "Tail recursive method can't be inlined: " + descriptor;
+        if (callGenerator != defaultCallGenerator) {
+            final boolean isTailCall = tailRecursionCodegen.isTailRecursion(resolvedCall);
+            if (isTailCall) {
+                callGenerator = defaultCallGenerator;
+            }
+            else if (context.getFunctionDescriptor().isTailrec()) {
+                assert false : "Non-tail-call can't be inlined: " + descriptor;
+            }
+        }
 
         ArgumentGenerator argumentGenerator = new CallBasedArgumentGenerator(this, callGenerator, descriptor.getValueParameters(),
                                                                              callableMethod.getValueParameterTypes());

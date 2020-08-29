@@ -10083,6 +10083,11 @@ public class IrJsCodegenBoxTestGenerated extends AbstractIrJsCodegenBoxTest {
             runTest("compiler/testData/codegen/box/functions/recursiveIncrementCall.kt");
         }
 
+        @TestMetadata("tailrecInline.kt")
+        public void testTailrecInline() throws Exception {
+            runTest("compiler/testData/codegen/box/functions/tailrecInline.kt");
+        }
+
         @TestMetadata("typeParametersInLocalFunction.kt")
         public void testTypeParametersInLocalFunction() throws Exception {
             runTest("compiler/testData/codegen/box/functions/typeParametersInLocalFunction.kt");

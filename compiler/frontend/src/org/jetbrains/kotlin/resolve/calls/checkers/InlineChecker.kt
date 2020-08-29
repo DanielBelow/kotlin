@@ -18,6 +18,8 @@ package org.jetbrains.kotlin.resolve.calls.checkers
 
 import com.intellij.psi.PsiElement
 import org.jetbrains.kotlin.builtins.isBuiltinFunctionalType
+import org.jetbrains.kotlin.cfg.ControlFlowInformationProvider
+import org.jetbrains.kotlin.cfg.TailRecursionKind
 import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.contracts.parsing.isFromContractDsl
 import org.jetbrains.kotlin.descriptors.*
@@ -25,11 +27,13 @@ import org.jetbrains.kotlin.diagnostics.Errors.*
 import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.getParentOfType
+import org.jetbrains.kotlin.resolve.BindingContext
 import org.jetbrains.kotlin.resolve.DescriptorUtils
 import org.jetbrains.kotlin.resolve.calls.callUtil.getResolvedCall
 import org.jetbrains.kotlin.resolve.calls.model.DefaultValueArgument
 import org.jetbrains.kotlin.resolve.calls.model.ResolvedCall
 import org.jetbrains.kotlin.resolve.calls.model.VariableAsFunctionResolvedCall
+import org.jetbrains.kotlin.resolve.checkers.PlatformDiagnosticSuppressor
 import org.jetbrains.kotlin.resolve.descriptorUtil.isEffectivelyPrivateApi
 import org.jetbrains.kotlin.resolve.descriptorUtil.isInsidePrivateClass
 import org.jetbrains.kotlin.resolve.inline.InlineUtil
@@ -91,7 +95,7 @@ internal class InlineChecker(private val descriptor: FunctionDescriptor) : CallC
         }
 
         checkVisibilityAndAccess(targetDescriptor, expression, context)
-        checkRecursion(context, targetDescriptor, expression)
+        checkRecursion(context, targetDescriptor, expression, resolvedCall)
     }
 
     private fun checkNotInDefaultParameter(context: CallCheckerContext, expression: KtExpression) =
@@ -226,11 +230,55 @@ internal class InlineChecker(private val descriptor: FunctionDescriptor) : CallC
     private fun checkRecursion(
         context: CallCheckerContext,
         targetDescriptor: CallableDescriptor,
-        expression: KtElement
+        expression: KtElement,
+        resolvedCall: ResolvedCall<*>
     ) {
         if (targetDescriptor.original === descriptor) {
-            context.trace.report(RECURSION_IN_INLINE.on(expression, expression, descriptor))
+            if (descriptor.isTailrec) {
+                getCalledFunctionDecl(context, resolvedCall)?.let {
+                    if (!isTailCall(context, it, resolvedCall)) {
+                        context.trace.report(NO_TAIL_CALL_IN_INLINE.on(expression, expression, descriptor))
+                    }
+                }
+            } else {
+                context.trace.report(RECURSION_IN_INLINE.on(expression, expression, descriptor))
+            }
         }
+    }
+
+    private fun getCalledFunctionDecl(context: CallCheckerContext, resolvedCall: ResolvedCall<*>): KtDeclaration? {
+        return context.resolutionContext.getContextParentOfType<KtDeclaration>(
+            resolvedCall.call.calleeExpression!!,
+            KtDeclarationWithBody::class.java
+        )
+    }
+
+    private fun isTailCall(
+        context: CallCheckerContext,
+        functionDecl: KtDeclaration,
+        resolvedCall: ResolvedCall<*>
+    ): Boolean {
+        val tailrecKind = getTailrecKind(context, functionDecl, resolvedCall)
+        return tailrecKind != null && tailrecKind.isDoGenerateTailRecursion
+    }
+
+    private fun getTailrecKind(
+        context: CallCheckerContext,
+        functionDecl: KtDeclaration,
+        resolvedCall: ResolvedCall<*>
+    ): TailRecursionKind? {
+        // tail-calls have not been marked yet
+        val cfgInfo = ControlFlowInformationProvider(
+            functionDecl,
+            context.trace,
+            context.languageVersionSettings,
+            PlatformDiagnosticSuppressor.Default
+        )
+
+        // mark tail-recursion-kind, but without reporting a diagnostic here
+        cfgInfo.markTailCalls()
+
+        return context.trace.get(BindingContext.TAIL_RECURSION_CALL, resolvedCall.call)
     }
 
     private fun isInvokeOrInlineExtension(descriptor: CallableDescriptor): Boolean {

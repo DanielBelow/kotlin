@@ -134,6 +134,65 @@ class ControlFlowInformationProvider private constructor(
         markAndCheckTailCalls()
     }
 
+    fun markTailCalls() {
+        val subroutineDescriptor = trace.get(DECLARATION_TO_DESCRIPTOR, subroutine) as? FunctionDescriptor ?: return
+
+        if (!subroutineDescriptor.isTailrec) return
+        if (subroutine is KtNamedFunction && !subroutine.hasBody()) return
+
+        // finally blocks are copied which leads to multiple diagnostics reported on one instruction
+        val calls = collectTailCalls(subroutineDescriptor)
+
+        for ((_, kindAndCall) in calls) {
+            when (kindAndCall.kind) {
+                TAIL_CALL -> trace.record(TAIL_RECURSION_CALL, kindAndCall.call.call, TAIL_CALL)
+                IN_TRY -> trace.record(TAIL_RECURSION_CALL, kindAndCall.call.call, IN_TRY)
+                NON_TAIL -> trace.record(TAIL_RECURSION_CALL, kindAndCall.call.call, NON_TAIL)
+            }
+        }
+    }
+
+    private class KindAndCall(var kind: TailRecursionKind, val call: ResolvedCall<*>)
+
+    private fun collectTailCalls(subroutineDescriptor: FunctionDescriptor): HashMap<KtElement, KindAndCall> {
+        val calls = HashMap<KtElement, KindAndCall>()
+        traverseCalls traverse@{ instruction, resolvedCall ->
+            // is this a recursive call?
+            val functionDescriptor = resolvedCall.resultingDescriptor
+            if (functionDescriptor.original != subroutineDescriptor) return@traverse
+            // Overridden functions using default arguments at tail call are not included: KT-4285
+            if (resolvedCall.call.valueArguments.size != functionDescriptor.valueParameters.size
+                && !functionDescriptor.overriddenDescriptors.isEmpty()
+            )
+                return@traverse
+
+            val element = instruction.element
+            //noinspection unchecked
+
+            if (isInsideTry(element)) {
+                // We do not support tail calls Collections.singletonMap() try-catch-finally, for simplicity of the mental model
+                // very few cases there would be real tail-calls, and it's often not so easy for the user to see why
+                calls[element] = KindAndCall(IN_TRY, resolvedCall)
+                return@traverse
+            }
+
+            // A tail call is not allowed to change dispatch receiver
+            //   class C {
+            //       fun foo(other: C) {
+            //           other.foo(this) // not a tail call
+            //       }
+            //   }
+            val sameDispatchReceiver = resolvedCall.hasThisOrNoDispatchReceiver(trace.bindingContext)
+
+            val kind = if (sameDispatchReceiver && instruction.isTailCall()) TAIL_CALL else NON_TAIL
+
+            val kindAndCall = calls[element]
+            calls[element] = KindAndCall(combineKinds(kind, kindAndCall?.kind), resolvedCall)
+        }
+
+        return calls
+    }
+
     /**
      * Collects returned expressions from current pseudocode.
      *
@@ -1052,51 +1111,15 @@ class ControlFlowInformationProvider private constructor(
         if (!subroutineDescriptor.isTailrec) return
         if (subroutine is KtNamedFunction && !subroutine.hasBody()) return
 
-        // finally blocks are copied which leads to multiple diagnostics reported on one instruction
-        class KindAndCall(var kind: TailRecursionKind, val call: ResolvedCall<*>)
-
-        val calls = HashMap<KtElement, KindAndCall>()
-        traverseCalls traverse@{ instruction, resolvedCall ->
-            // is this a recursive call?
-            val functionDescriptor = resolvedCall.resultingDescriptor
-            if (functionDescriptor.original != subroutineDescriptor) return@traverse
-            // Overridden functions using default arguments at tail call are not included: KT-4285
-            if (resolvedCall.call.valueArguments.size != functionDescriptor.valueParameters.size
-                && !functionDescriptor.overriddenDescriptors.isEmpty()
-            )
-                return@traverse
-
-            val element = instruction.element
-            //noinspection unchecked
-
-            if (isInsideTry(element)) {
-                // We do not support tail calls Collections.singletonMap() try-catch-finally, for simplicity of the mental model
-                // very few cases there would be real tail-calls, and it's often not so easy for the user to see why
-                calls[element] = KindAndCall(IN_TRY, resolvedCall)
-                return@traverse
-            }
-
-            // A tail call is not allowed to change dispatch receiver
-            //   class C {
-            //       fun foo(other: C) {
-            //           other.foo(this) // not a tail call
-            //       }
-            //   }
-            val sameDispatchReceiver = resolvedCall.hasThisOrNoDispatchReceiver(trace.bindingContext)
-
-            val kind = if (sameDispatchReceiver && instruction.isTailCall()) TAIL_CALL else NON_TAIL
-
-            val kindAndCall = calls[element]
-            calls[element] = KindAndCall(combineKinds(kind, kindAndCall?.kind), resolvedCall)
-        }
+        markTailCalls()
+        val calls = collectTailCalls(subroutineDescriptor)
 
         var hasTailCalls = false
         for ((element, kindAndCall) in calls) {
-            when (kindAndCall.kind) {
-                TAIL_CALL -> {
-                    trace.record(TAIL_RECURSION_CALL, kindAndCall.call.call, TAIL_CALL)
-                    hasTailCalls = true
-                }
+            // should already be resolved by 'markTailCalls()' invocation earlier
+            val alreadyResolvedKind = trace.get(TAIL_RECURSION_CALL, kindAndCall.call.call)
+            when (alreadyResolvedKind ?: kindAndCall.kind) {
+                TAIL_CALL -> hasTailCalls = true
                 IN_TRY -> trace.report(Errors.TAIL_RECURSION_IN_TRY_IS_NOT_SUPPORTED.on(element))
                 NON_TAIL -> trace.report(Errors.NON_TAIL_RECURSIVE_CALL.on(element))
             }

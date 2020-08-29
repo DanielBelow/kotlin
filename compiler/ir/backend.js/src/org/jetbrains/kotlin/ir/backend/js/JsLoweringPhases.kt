@@ -217,13 +217,20 @@ private val localClassesExtractionFromInlineFunctionsPhase = makeBodyLoweringPha
     prerequisite = setOf(localClassesInInlineFunctionsPhase)
 )
 
+private val tailrecLoweringPhase = makeBodyLoweringPhase(
+    ::TailrecLowering,
+    name = "TailrecLowering",
+    description = "Replace `tailrec` callsites with equivalent loop"
+)
+
 private val functionInliningPhase = makeBodyLoweringPhase(
     ::FunctionInlining,
     name = "FunctionInliningPhase",
     description = "Perform function inlining",
     prerequisite = setOf(
         expectDeclarationsRemovingPhase, sharedVariablesLoweringPhase,
-        localClassesInInlineLambdasPhase, localClassesExtractionFromInlineFunctionsPhase
+        localClassesInInlineLambdasPhase, localClassesExtractionFromInlineFunctionsPhase,
+        tailrecLoweringPhase
     )
 )
 
@@ -252,12 +259,6 @@ private val throwableSuccessorsLoweringPhase = makeBodyLoweringPhase(
     },
     name = "ThrowableLowering",
     description = "Link kotlin.Throwable and JavaScript Error together to provide proper interop between language and platform exceptions"
-)
-
-private val tailrecLoweringPhase = makeBodyLoweringPhase(
-    ::TailrecLowering,
-    name = "TailrecLowering",
-    description = "Replace `tailrec` callsites with equivalent loop"
 )
 
 private val enumClassConstructorLoweringPhase = makeDeclarationTransformerPhase(
@@ -657,12 +658,12 @@ val loweringList = listOf<Lowering>(
     localClassesInInlineLambdasPhase,
     localClassesInInlineFunctionsPhase,
     localClassesExtractionFromInlineFunctionsPhase,
+    tailrecLoweringPhase,
     functionInliningPhase,
     copyInlineFunctionBodyLoweringPhase,
     createScriptFunctionsPhase,
     callableReferenceLowering,
     singleAbstractMethodPhase,
-    tailrecLoweringPhase,
     enumClassConstructorLoweringPhase,
     enumClassConstructorBodyLoweringPhase,
     localDelegatedPropertiesLoweringPhase,

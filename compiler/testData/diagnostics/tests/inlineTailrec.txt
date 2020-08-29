@@ -1,0 +1,3 @@
+package
+
+public tailrec inline fun factorial(/*0*/ a: kotlin.Int, /*1*/ b: kotlin.Int = ...): kotlin.Int
